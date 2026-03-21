@@ -1,0 +1,306 @@
+-- SLFB Script using Rayfield UI Library
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+local Window = Rayfield:CreateWindow({
+   Name = "SLFB",
+   Icon = 0,
+   LoadingTitle = "SLFB",
+   LoadingSubtitle = "Loading...",
+   Theme = "Default",
+   DisableRayfieldPrompts = false,
+   DisableBuildWarnings = false,
+})
+
+-- ============================================================
+-- SERVICES
+-- ============================================================
+local workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+
+-- GameFolder reference
+local GameFolder = workspace:WaitForChild("GameFolder")
+
+-- ESP storage per rarity
+local ESPConnections = {}
+local ESPBillboards = {}
+
+-- ============================================================
+-- ESP HELPERS
+-- ============================================================
+local function ClearESPByTag(tag)
+    for key, bb in pairs(ESPBillboards) do
+        if string.find(key, tag, 1, true) then
+            if bb and bb.Parent then
+                bb:Destroy()
+            end
+            ESPBillboards[key] = nil
+        end
+    end
+end
+
+local function CreateBillboard(adornee, text, color)
+    local bb = Instance.new("BillboardGui")
+    bb.AlwaysOnTop = true
+    bb.Size = UDim2.new(0, 140, 0, 35)
+    bb.StudsOffset = Vector3.new(0, 4, 0)
+    bb.Adornee = adornee
+    bb.Parent = adornee
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+    label.TextStrokeTransparency = 0
+    label.TextScaled = true
+    label.Font = Enum.Font.GothamBold
+    label.Parent = bb
+
+    return bb
+end
+
+-- ============================================================
+-- TAB 1: BRAINROTS
+-- ============================================================
+local BrainrotsTab = Window:CreateTab("Brainrots", nil)
+
+local rarityColors = {
+    Celestial  = Color3.fromRGB(180, 230, 255),
+    Common     = Color3.fromRGB(200, 200, 200),
+    Epic       = Color3.fromRGB(163, 73, 255),
+    Godly      = Color3.fromRGB(255, 215, 0),
+    Legendary  = Color3.fromRGB(255, 140, 0),
+    Mythic     = Color3.fromRGB(255, 50, 50),
+    Rare       = Color3.fromRGB(0, 120, 255),
+    Secret     = Color3.fromRGB(50, 255, 150),
+}
+
+local rarityList = {"Celestial", "Common", "Epic", "Godly", "Legendary", "Mythic", "Rare", "Secret"}
+
+for _, rarity in ipairs(rarityList) do
+    local rarityLower = rarity:lower()
+
+    BrainrotsTab:CreateSection(rarity .. " ESP")
+
+    BrainrotsTab:CreateToggle({
+        Name = "Show " .. rarity .. " Brainrots",
+        CurrentValue = false,
+        Flag = "ESP_" .. rarity,
+        Callback = function(state)
+            -- Disconnect existing connection for this rarity
+            if ESPConnections[rarity] then
+                ESPConnections[rarity]:Disconnect()
+                ESPConnections[rarity] = nil
+            end
+            ClearESPByTag(rarityLower)
+
+            if state then
+                local timer = 0
+                ESPConnections[rarity] = RunService.Heartbeat:Connect(function(dt)
+                    timer = timer + dt
+                    if timer < 0.5 then return end
+                    timer = 0
+
+                    ClearESPByTag(rarityLower)
+
+                    local brainrotsFolder = GameFolder:FindFirstChild("Brainrots")
+                    if not brainrotsFolder then return end
+
+                    local rarityFolder = brainrotsFolder:FindFirstChild(rarity)
+                    if not rarityFolder then return end
+
+                    for _, obj in ipairs(rarityFolder:GetChildren()) do
+                        local part = obj:IsA("BasePart") and obj
+                            or obj:FindFirstChildWhichIsA("BasePart", true)
+                        if part then
+                            local key = rarityLower .. "_" .. obj.Name
+                            if not ESPBillboards[key] or not ESPBillboards[key].Parent then
+                                ESPBillboards[key] = CreateBillboard(part, obj.Name, rarityColors[rarity])
+                            end
+                        end
+                    end
+                end)
+            end
+        end,
+    })
+end
+
+-- ============================================================
+-- TAB 2: LAVAS
+-- ============================================================
+local LavasTab = Window:CreateTab("Lavas", nil)
+
+LavasTab:CreateSection("Remove Lavas")
+
+LavasTab:CreateButton({
+    Name = "Remove All Lavas",
+    Callback = function()
+        local folder = GameFolder:FindFirstChild("Lavas")
+        if folder then
+            local removed = 0
+            for i = 1, 8 do
+                local lava = folder:FindFirstChild(tostring(i))
+                if lava then
+                    lava:Destroy()
+                    removed = removed + 1
+                end
+            end
+            Rayfield:Notify({
+                Title = "Lavas",
+                Content = "Removed " .. removed .. " lava(s).",
+                Duration = 3,
+            })
+        else
+            Rayfield:Notify({
+                Title = "Lavas",
+                Content = "Lavas folder not found in GameFolder.",
+                Duration = 3,
+            })
+        end
+    end,
+})
+
+-- ============================================================
+-- TAB 3: LUCKY BLOCKS
+-- ============================================================
+local LuckyBlocksTab = Window:CreateTab("LuckyBlocks", nil)
+
+LuckyBlocksTab:CreateSection("Name ESP")
+
+local LuckyBlockESPConnection = nil
+
+LuckyBlocksTab:CreateToggle({
+    Name = "LuckyBlock Name ESP",
+    CurrentValue = false,
+    Flag = "LuckyBlockESP",
+    Callback = function(state)
+        if LuckyBlockESPConnection then
+            LuckyBlockESPConnection:Disconnect()
+            LuckyBlockESPConnection = nil
+        end
+        ClearESPByTag("luckyblock")
+
+        if state then
+            local timer = 0
+            LuckyBlockESPConnection = RunService.Heartbeat:Connect(function(dt)
+                timer = timer + dt
+                if timer < 0.5 then return end
+                timer = 0
+
+                ClearESPByTag("luckyblock")
+
+                local folder = GameFolder:FindFirstChild("LuckyBlocks")
+                if not folder then return end
+
+                for _, child in ipairs(folder:GetChildren()) do
+                    local part = child:IsA("BasePart") and child
+                        or child:FindFirstChildWhichIsA("BasePart", true)
+                    if part then
+                        local key = "luckyblock_" .. child.Name
+                        if not ESPBillboards[key] or not ESPBillboards[key].Parent then
+                            ESPBillboards[key] = CreateBillboard(part, child.Name, Color3.fromRGB(255, 230, 0))
+                        end
+                    end
+                end
+            end)
+        end
+    end,
+})
+
+-- ============================================================
+-- TAB 4: PLOTS
+-- ============================================================
+local PlotsTab = Window:CreateTab("Plots", nil)
+
+PlotsTab:CreateSection("Teleport to Plot")
+
+for i = 1, 5 do
+    PlotsTab:CreateButton({
+        Name = "Teleport to Plot " .. i,
+        Callback = function()
+            local folder = GameFolder:FindFirstChild("Plots")
+            if folder then
+                local plot = folder:FindFirstChild(tostring(i))
+                if plot then
+                    local part = plot:IsA("BasePart") and plot
+                        or plot:FindFirstChildWhichIsA("BasePart", true)
+                    if part then
+                        local char = game.Players.LocalPlayer.Character
+                        if char and char:FindFirstChild("HumanoidRootPart") then
+                            char.HumanoidRootPart.CFrame = part.CFrame + Vector3.new(0, 5, 0)
+                        end
+                    end
+                else
+                    Rayfield:Notify({
+                        Title = "Plots",
+                        Content = "Plot " .. i .. " not found.",
+                        Duration = 3,
+                    })
+                end
+            end
+        end,
+    })
+end
+
+-- ============================================================
+-- TAB 5: VIP DOORS
+-- ============================================================
+local VIPDoorsTab = Window:CreateTab("VIPDoors", nil)
+
+VIPDoorsTab:CreateSection("Remove VIP Doors")
+
+VIPDoorsTab:CreateButton({
+    Name = "Remove All VIP Doors",
+    Callback = function()
+        local folder = GameFolder:FindFirstChild("VIPDoors")
+        if folder then
+            local removed = 0
+            for _, child in ipairs(folder:GetChildren()) do
+                if child.Name == "VIPDoor" then
+                    child:Destroy()
+                    removed = removed + 1
+                end
+            end
+            Rayfield:Notify({
+                Title = "VIPDoors",
+                Content = "Removed " .. removed .. " VIP Door(s).",
+                Duration = 3,
+            })
+        else
+            Rayfield:Notify({
+                Title = "VIPDoors",
+                Content = "VIPDoors folder not found in GameFolder.",
+                Duration = 3,
+            })
+        end
+    end,
+})
+
+-- ============================================================
+-- TAB 6: FUSE MOUNTAIN
+-- ============================================================
+local FuseTab = Window:CreateTab("FuseMountain", nil)
+
+FuseTab:CreateSection("Teleport")
+
+FuseTab:CreateButton({
+    Name = "Teleport to Fuse Mountain",
+    Callback = function()
+        local char = game.Players.LocalPlayer.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            char.HumanoidRootPart.CFrame = CFrame.new(
+                0.11899566650390625,
+                264.4756164550781,
+                -3602.82568359375
+            )
+            Rayfield:Notify({
+                Title = "FuseMountain",
+                Content = "Teleported to Fuse Mountain!",
+                Duration = 3,
+            })
+        end
+    end,
+})
+
+-- ============================================================
+Rayfield:LoadConfiguration()
