@@ -14,19 +14,18 @@ local Window = Rayfield:CreateWindow({
 -- ============================================================
 -- SERVICES
 -- ============================================================
-local workspace        = game:GetService("Workspace")
-local RunService       = game:GetService("RunService")
-local Players          = game:GetService("Players")
-local TweenService     = game:GetService("TweenService")
-local VIM              = game:GetService("VirtualInputManager")
-local UserInputService = game:GetService("UserInputService")
-local ContextActionService = game:GetService("ContextActionService")
+local workspace            = game:GetService("Workspace")
+local RunService           = game:GetService("RunService")
+local Players              = game:GetService("Players")
+local TweenService         = game:GetService("TweenService")
+local VIM                  = game:GetService("VirtualInputManager")
+local UserInputService     = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
 local GameFolder  = workspace:WaitForChild("GameFolder")
 
 -- ============================================================
--- RARITY ORDER (Common → Godly)
+-- RARITY ORDER
 -- ============================================================
 local rarityList = {"Common","Rare","Epic","Legendary","Mythic","Secret","Celestial","Godly"}
 
@@ -103,6 +102,7 @@ end
 -- ============================================================
 local BrainrotsTab = Window:CreateTab("Brainrots", nil)
 
+-- Live Counter
 BrainrotsTab:CreateSection("Brainrot Count (Live)")
 
 local countParagraph = BrainrotsTab:CreateParagraph({
@@ -115,30 +115,26 @@ RunService.Heartbeat:Connect(function(dt)
     countTimer = countTimer + dt
     if countTimer < 1 then return end
     countTimer = 0
-
     local brainrotsFolder = GameFolder:FindFirstChild("Brainrots")
     if not brainrotsFolder then
         countParagraph:Set({ Title = "Brainrots in World", Content = "Brainrots folder not found." })
         return
     end
-
     local parts = {}
     for _, rarity in ipairs(rarityList) do
         local folder = brainrotsFolder:FindFirstChild(rarity)
         if folder then
             local count = #folder:GetChildren()
-            if count > 0 then
-                parts[#parts+1] = rarity .. ": " .. count
-            end
+            if count > 0 then parts[#parts+1] = rarity .. ": " .. count end
         end
     end
-
     countParagraph:Set({
         Title   = "Brainrots in World",
         Content = #parts > 0 and table.concat(parts, " | ") or "None found."
     })
 end)
 
+-- Brainrot ESP
 BrainrotsTab:CreateSection("Brainrot ESP")
 
 for _, rarity in ipairs(rarityList) do
@@ -153,7 +149,6 @@ for _, rarity in ipairs(rarityList) do
                 ESPConnections[rarity] = nil
             end
             ClearESPByTag(tag)
-
             if state then
                 local timer = 0
                 ESPConnections[rarity] = RunService.Heartbeat:Connect(function(dt)
@@ -181,15 +176,12 @@ for _, rarity in ipairs(rarityList) do
     })
 end
 
--- ============================================================
--- TAB 2: LUCKY BLOCKS
--- ============================================================
-local LuckyBlocksTab    = Window:CreateTab("LuckyBlocks", nil)
+-- LuckyBlock ESP (sub-section inside Brainrots tab)
+BrainrotsTab:CreateSection("LuckyBlock ESP")
+
 local LuckyBlockESPConn = nil
 
-LuckyBlocksTab:CreateSection("Name ESP")
-
-LuckyBlocksTab:CreateToggle({
+BrainrotsTab:CreateToggle({
     Name         = "LuckyBlock Name ESP",
     CurrentValue = false,
     Flag         = "LuckyBlockESP",
@@ -221,7 +213,7 @@ LuckyBlocksTab:CreateToggle({
 })
 
 -- ============================================================
--- TAB 3: AUTOFARM
+-- TAB 2: AUTOFARM
 -- ============================================================
 local AutofarmTab = Window:CreateTab("Autofarm", nil)
 
@@ -232,13 +224,15 @@ local instantPickup   = false
 local farmSpeed       = 50
 local antiKickActive  = false
 local antiKickConn    = nil
+local autoRebirthOn   = false
+local autoRebirthConn = nil
 
--- Requirements notice
+-- Requirements
 AutofarmTab:CreateSection("⚠️ Requirements")
 
 AutofarmTab:CreateParagraph({
     Title   = "IMPORTANT – Read Before Use",
-    Content = "Autofarm REQUIRES 'Instant Pickup' to be enabled. Without it brainrots will be skipped. Enable Anti-Kick to avoid being kicked while farming."
+    Content = "Autofarm REQUIRES 'Instant Pickup' to be enabled. Without it brainrots will be skipped. Enable Anti-Kick to avoid being disconnected while farming."
 })
 
 -- Instant Pickup
@@ -261,11 +255,7 @@ AutofarmTab:CreateToggle({
                 if instantPickup then applyInstant(v) end
             end)
         end
-        Rayfield:Notify({
-            Title   = "Instant Pickup",
-            Content = state and "Enabled." or "Disabled.",
-            Duration = 3
-        })
+        Rayfield:Notify({ Title = "Instant Pickup", Content = state and "Enabled." or "Disabled.", Duration = 3 })
     end,
 })
 
@@ -279,30 +269,63 @@ AutofarmTab:CreateToggle({
     Callback     = function(state)
         antiKickActive = state
         if antiKickConn then antiKickConn:Disconnect(); antiKickConn = nil end
-
         if state then
-            -- Periodically reset velocity and simulate normal activity
-            -- to prevent server-side idle/speed kick detection
             antiKickConn = RunService.Heartbeat:Connect(function()
                 local char = LocalPlayer.Character
                 if not char then return end
                 local hrp = char:FindFirstChild("HumanoidRootPart")
                 local hum = char:FindFirstChildOfClass("Humanoid")
-                if hrp and hum then
-                    -- Clamp assembly velocity to prevent speed kick triggers
-                    local vel = hrp.AssemblyLinearVelocity
-                    if vel.Magnitude > 500 then
-                        hrp.AssemblyLinearVelocity = vel.Unit * 500
-                    end
-                    -- Keep humanoid state alive
-                    if hum:GetState() == Enum.HumanoidStateType.Dead then return end
+                if not hrp or not hum then return end
+                local vel = hrp.AssemblyLinearVelocity
+                if vel.Magnitude > 500 then
+                    hrp.AssemblyLinearVelocity = vel.Unit * 500
+                end
+                if hum:GetState() ~= Enum.HumanoidStateType.Dead then
                     hum:ChangeState(Enum.HumanoidStateType.Running)
                 end
             end)
-            Rayfield:Notify({ Title = "Anti-Kick", Content = "Enabled.", Duration = 3 })
-        else
-            Rayfield:Notify({ Title = "Anti-Kick", Content = "Disabled.", Duration = 3 })
         end
+        Rayfield:Notify({ Title = "Anti-Kick", Content = state and "Enabled." or "Disabled.", Duration = 3 })
+    end,
+})
+
+-- Auto-Rebirth
+AutofarmTab:CreateSection("Auto-Rebirth")
+
+AutofarmTab:CreateToggle({
+    Name         = "Auto-Rebirth",
+    CurrentValue = false,
+    Flag         = "AutoRebirth",
+    Callback     = function(state)
+        autoRebirthOn = state
+        if autoRebirthConn then autoRebirthConn:Disconnect(); autoRebirthConn = nil end
+        if state then
+            local rebirthTimer = 0
+            autoRebirthConn = RunService.Heartbeat:Connect(function(dt)
+                rebirthTimer = rebirthTimer + dt
+                if rebirthTimer < 1 then return end
+                rebirthTimer = 0
+                pcall(function()
+                    local gui = Players[LocalPlayer.Name].PlayerGui
+                    local rebirthBtn = gui.HUD.Rebirth.InsiderFrame.Rebirth
+                    -- Fire the button's MouseButton1Click
+                    rebirthBtn:FindFirstChildOfClass("ImageButton")
+                        and rebirthBtn:FindFirstChildOfClass("ImageButton"):SimulateClick()
+                    -- Also try direct FireServer via any click detector / remote
+                    local clickDetector = rebirthBtn:FindFirstChildOfClass("ClickDetector")
+                    if clickDetector then
+                        fireclickdetector(clickDetector)
+                    end
+                    -- Try TextButton / ImageButton simulation
+                    local btn = rebirthBtn:FindFirstChildOfClass("TextButton")
+                        or rebirthBtn:FindFirstChildOfClass("ImageButton")
+                    if btn then
+                        btn.MouseButton1Click:Fire()
+                    end
+                end)
+            end)
+        end
+        Rayfield:Notify({ Title = "Auto-Rebirth", Content = state and "Enabled." or "Disabled.", Duration = 3 })
     end,
 })
 
@@ -320,14 +343,12 @@ AutofarmTab:CreateDropdown({
 })
 
 AutofarmTab:CreateSlider({
-    Name    = "Tween Speed",
-    Range   = {10, 300},
-    Increment = 5,
+    Name         = "Tween Speed",
+    Range        = {10, 300},
+    Increment    = 5,
     CurrentValue = 50,
-    Flag    = "FarmSpeed",
-    Callback = function(val)
-        farmSpeed = val
-    end,
+    Flag         = "FarmSpeed",
+    Callback     = function(val) farmSpeed = val end,
 })
 
 -- Helpers
@@ -350,7 +371,7 @@ local function PressE()
     VIM:SendKeyEvent(false, Enum.KeyCode.E, false, game)
 end
 
-local homePosition = Vector3.new(-0.67, 4.76, -21.57)
+local homePosition = Vector3.new(-40.52, 4.26, -38.55)
 
 local function RunAutofarm()
     while autofarmRunning do
@@ -365,13 +386,13 @@ local function RunAutofarm()
             else
                 for _, part in ipairs(brainrots) do
                     if not autofarmRunning then break end
-                    task.wait(0.2)
+                    task.wait(0.4)
                     TweenTo(part.Position + Vector3.new(0, 3, 0), farmSpeed)
-                    task.wait(0.2)
+                    task.wait(0.4)
                     PressE()
-                    task.wait(0.2)
+                    task.wait(0.4)
                     TweenTo(homePosition, farmSpeed)
-                    task.wait(0.2)
+                    task.wait(0.4)
                 end
             end
         end
@@ -379,7 +400,6 @@ local function RunAutofarm()
     end
 end
 
--- Autofarm toggle
 AutofarmTab:CreateSection("Autofarm")
 
 AutofarmTab:CreateToggle({
@@ -404,7 +424,7 @@ AutofarmTab:CreateToggle({
 })
 
 -- ============================================================
--- TAB 4: WORLD
+-- TAB 3: WORLD
 -- ============================================================
 local WorldTab = Window:CreateTab("World", nil)
 
@@ -446,7 +466,7 @@ WorldTab:CreateButton({
 })
 
 -- ============================================================
--- TAB 5: TELEPORT
+-- TAB 4: TELEPORT
 -- ============================================================
 local TeleportTab = Window:CreateTab("Teleport", nil)
 
@@ -488,36 +508,33 @@ TeleportTab:CreateButton({
 })
 
 -- ============================================================
--- TAB 6: MOVEMENT
+-- TAB 5: MOVEMENT
 -- ============================================================
 local MovementTab = Window:CreateTab("Movement", nil)
 
--- ── Infinite Jump ────────────────────────────────────────────
+-- ── Infinite Jump ─────────────────────────────────────────
 MovementTab:CreateSection("Infinite Jump")
 
-local infJumpActive = false
-local infJumpConn   = nil
+local infJumpConn = nil
 
 MovementTab:CreateToggle({
     Name         = "Infinite Jump",
     CurrentValue = false,
     Flag         = "InfJump",
     Callback     = function(state)
-        infJumpActive = state
         if infJumpConn then infJumpConn:Disconnect(); infJumpConn = nil end
         if state then
             infJumpConn = UserInputService.JumpRequest:Connect(function()
                 local char = LocalPlayer.Character
-                if char then
-                    local hum = char:FindFirstChildOfClass("Humanoid")
-                    if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
-                end
+                if not char then return end
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
             end)
         end
     end,
 })
 
--- ── TP Walk ──────────────────────────────────────────────────
+-- ── TP Walk ───────────────────────────────────────────────
 MovementTab:CreateSection("TP Walk")
 
 local tpWalkActive = false
@@ -540,7 +557,6 @@ MovementTab:CreateToggle({
     Callback     = function(state)
         tpWalkActive = state
         if tpWalkConn then tpWalkConn:Disconnect(); tpWalkConn = nil end
-
         if state then
             tpWalkConn = RunService.Heartbeat:Connect(function()
                 local char = LocalPlayer.Character
@@ -548,30 +564,113 @@ MovementTab:CreateToggle({
                 local hrp = char:FindFirstChild("HumanoidRootPart")
                 local hum = char:FindFirstChildOfClass("Humanoid")
                 if not hrp or not hum then return end
-
                 local moveDir = hum.MoveDirection
                 if moveDir.Magnitude < 0.1 then return end
-
                 local targetPos = hrp.Position + (moveDir * (tpWalkSpeed * 0.05))
-                local tween = TweenService:Create(
+                TweenService:Create(
                     hrp,
                     TweenInfo.new(0.05, Enum.EasingStyle.Linear),
                     { CFrame = CFrame.new(targetPos) * (hrp.CFrame - hrp.CFrame.Position) }
-                )
-                tween:Play()
+                ):Play()
             end)
         end
     end,
 })
 
--- ── Fly ──────────────────────────────────────────────────────
+-- ── Fly ───────────────────────────────────────────────────
 MovementTab:CreateSection("Fly")
 
 local flyActive   = false
 local flySpeed    = 50
 local flyConn     = nil
-local flyBodyVel  = nil
-local flyBodyGyro = nil
+local flyChar     = nil
+local flyHRP      = nil
+local flyHum      = nil
+
+-- Clean up any existing fly instances
+local function StopFly()
+    flyActive = false
+    if flyConn then flyConn:Disconnect(); flyConn = nil end
+    if flyHRP then
+        local bv = flyHRP:FindFirstChild("SLFB_FlyVel")
+        if bv then bv:Destroy() end
+        local bg = flyHRP:FindFirstChild("SLFB_FlyGyro")
+        if bg then bg:Destroy() end
+    end
+    if flyHum then
+        flyHum.PlatformStand = false
+    end
+    flyHRP = nil
+    flyHum = nil
+    flyChar = nil
+end
+
+local function StartFly()
+    flyChar = LocalPlayer.Character
+    if not flyChar then return end
+    flyHRP  = flyChar:FindFirstChild("HumanoidRootPart")
+    flyHum  = flyChar:FindFirstChildOfClass("Humanoid")
+    if not flyHRP or not flyHum then return end
+
+    flyActive = true
+    flyHum.PlatformStand = true
+
+    -- Create controllers fresh
+    local bv = Instance.new("BodyVelocity")
+    bv.Name      = "SLFB_FlyVel"
+    bv.Velocity  = Vector3.zero
+    bv.MaxForce  = Vector3.new(math.huge, math.huge, math.huge)
+    bv.P         = 1e4
+    bv.Parent    = flyHRP
+
+    local bg = Instance.new("BodyGyro")
+    bg.Name       = "SLFB_FlyGyro"
+    bg.MaxTorque  = Vector3.new(math.huge, math.huge, math.huge)
+    bg.P          = 1e4
+    bg.D          = 100
+    bg.CFrame     = flyHRP.CFrame
+    bg.Parent     = flyHRP
+
+    flyConn = RunService.RenderStepped:Connect(function()
+        -- Re-grab in case of respawn
+        local char = LocalPlayer.Character
+        if not char then StopFly() return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then StopFly() return end
+
+        local cam  = workspace.CurrentCamera
+        local vel  = Vector3.zero
+        local up   = Vector3.new(0, 1, 0)
+        local look = Vector3.new(cam.CFrame.LookVector.X, 0, cam.CFrame.LookVector.Z).Unit
+        local right = Vector3.new(cam.CFrame.RightVector.X, 0, cam.CFrame.RightVector.Z).Unit
+
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel = vel + look end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel = vel - look end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel = vel - right end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel = vel + right end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then vel = vel + up end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then vel = vel - up end
+
+        local activeVel = hrp:FindFirstChild("SLFB_FlyVel")
+        local activeGyro = hrp:FindFirstChild("SLFB_FlyGyro")
+        if not activeVel or not activeGyro then StopFly() return end
+
+        if vel.Magnitude > 0 then
+            activeVel.Velocity = vel.Unit * flySpeed
+        else
+            -- Hover in place with damping
+            activeVel.Velocity = activeVel.Velocity * 0.75
+        end
+
+        -- Smoothly rotate toward movement direction
+        if vel.Magnitude > 0 then
+            local targetCFrame = CFrame.new(hrp.Position, hrp.Position + vel)
+            activeGyro.CFrame = targetCFrame
+        else
+            activeGyro.CFrame = hrp.CFrame
+        end
+    end)
+end
 
 MovementTab:CreateSlider({
     Name         = "Fly Speed",
@@ -579,10 +678,7 @@ MovementTab:CreateSlider({
     Increment    = 5,
     CurrentValue = 50,
     Flag         = "FlySpeed",
-    Callback     = function(val)
-        flySpeed = val
-        if flyBodyVel then flyBodyVel.MaxForce = Vector3.new(1e5, 1e5, 1e5) end
-    end,
+    Callback     = function(val) flySpeed = val end,
 })
 
 MovementTab:CreateToggle({
@@ -590,67 +686,19 @@ MovementTab:CreateToggle({
     CurrentValue = false,
     Flag         = "FlyToggle",
     Callback     = function(state)
-        flyActive = state
-        local char = LocalPlayer.Character
-        if not char then return end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hrp or not hum then return end
-
-        if flyConn then flyConn:Disconnect(); flyConn = nil end
-        if flyBodyVel  then flyBodyVel:Destroy();  flyBodyVel  = nil end
-        if flyBodyGyro then flyBodyGyro:Destroy(); flyBodyGyro = nil end
-
         if state then
-            hum.PlatformStand = true
-
-            flyBodyVel = Instance.new("BodyVelocity")
-            flyBodyVel.Velocity  = Vector3.zero
-            flyBodyVel.MaxForce  = Vector3.new(1e5, 1e5, 1e5)
-            flyBodyVel.Parent    = hrp
-
-            flyBodyGyro = Instance.new("BodyGyro")
-            flyBodyGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-            flyBodyGyro.P         = 1e4
-            flyBodyGyro.CFrame    = hrp.CFrame
-            flyBodyGyro.Parent    = hrp
-
-            flyConn = RunService.Heartbeat:Connect(function()
-                local cam = workspace.CurrentCamera
-                if not cam then return end
-
-                local moveVec = Vector3.zero
-                if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-                    moveVec = moveVec + cam.CFrame.LookVector
-                end
-                if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-                    moveVec = moveVec - cam.CFrame.LookVector
-                end
-                if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-                    moveVec = moveVec - cam.CFrame.RightVector
-                end
-                if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-                    moveVec = moveVec + cam.CFrame.RightVector
-                end
-                if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-                    moveVec = moveVec + Vector3.new(0, 1, 0)
-                end
-                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-                    moveVec = moveVec - Vector3.new(0, 1, 0)
-                end
-
-                if moveVec.Magnitude > 0 then
-                    flyBodyVel.Velocity = moveVec.Unit * flySpeed
-                    flyBodyGyro.CFrame  = CFrame.new(Vector3.zero, moveVec)
-                else
-                    flyBodyVel.Velocity = Vector3.zero
-                end
-            end)
+            StartFly()
         else
-            hum.PlatformStand = false
+            StopFly()
         end
     end,
 })
+
+-- Auto-restart fly on character respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    if flyActive then StartFly() end
+end)
 
 -- ============================================================
 Rayfield:LoadConfiguration()
