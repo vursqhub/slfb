@@ -169,6 +169,7 @@ task.spawn(function()
         wGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         wGui.Parent         = LocalPlayer.PlayerGui
 
+        -- Outer container (accent line lives here)
         local frame = Instance.new("Frame")
         frame.Size                   = UDim2.new(0, 380, 0, 36)
         frame.Position               = UDim2.new(0.5, -190, 0, 6)
@@ -177,20 +178,9 @@ task.spawn(function()
         frame.BorderSizePixel        = 0
         frame.Parent                 = wGui
 
-        local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 5)
-        corner.Parent = frame
-
-        local accent = Instance.new("Frame")
-        accent.Size             = UDim2.new(1, 0, 0, 1)
-        accent.Position         = UDim2.new(0, 0, 0, 0)
-        accent.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
-        accent.BorderSizePixel  = 0
-        accent.Parent           = frame
-
-        local accentCorner = Instance.new("UICorner")
-        accentCorner.CornerRadius = UDim.new(0, 5)
-        accentCorner.Parent = accent
+        local outerCorner = Instance.new("UICorner")
+        outerCorner.CornerRadius = UDim.new(0, 5)
+        outerCorner.Parent = frame
 
         local stroke = Instance.new("UIStroke")
         stroke.Color        = Color3.fromRGB(35, 35, 35)
@@ -198,12 +188,33 @@ task.spawn(function()
         stroke.Transparency = 0
         stroke.Parent       = frame
 
+        -- 1px top accent line — child of outer frame only, no layout on this frame
+        local accent = Instance.new("Frame")
+        accent.Size             = UDim2.new(1, 0, 0, 1)
+        accent.Position         = UDim2.new(0, 0, 0, 0)
+        accent.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
+        accent.BorderSizePixel  = 0
+        accent.ZIndex           = 2
+        accent.Parent           = frame
+
+        local accentCorner = Instance.new("UICorner")
+        accentCorner.CornerRadius = UDim.new(0, 5)
+        accentCorner.Parent = accent
+
+        -- Inner content frame — layout lives here, NOT on outer frame
+        local inner = Instance.new("Frame")
+        inner.Size                   = UDim2.new(1, 0, 1, 0)
+        inner.Position               = UDim2.new(0, 0, 0, 0)
+        inner.BackgroundTransparency = 1
+        inner.BorderSizePixel        = 0
+        inner.Parent                 = frame
+
         local layout = Instance.new("UIListLayout")
         layout.FillDirection       = Enum.FillDirection.Horizontal
         layout.VerticalAlignment   = Enum.VerticalAlignment.Center
         layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
         layout.Padding             = UDim.new(0, 0)
-        layout.Parent              = frame
+        layout.Parent              = inner
 
         local function MakeLabel(text, bold)
             local lbl = Instance.new("TextLabel")
@@ -215,7 +226,7 @@ task.spawn(function()
             lbl.TextSize               = 12
             lbl.TextColor3             = Color3.fromRGB(220, 220, 220)
             lbl.TextStrokeTransparency = 1
-            lbl.Parent                 = frame
+            lbl.Parent                 = inner
             return lbl
         end
 
@@ -228,12 +239,12 @@ task.spawn(function()
             d.TextSize               = 11
             d.TextColor3             = Color3.fromRGB(50, 50, 50)
             d.TextStrokeTransparency = 1
-            d.Parent                 = frame
+            d.Parent                 = inner
             return d
         end
 
         local padL = Instance.new("Frame")
-        padL.Size = UDim2.new(0, 10, 1, 0); padL.BackgroundTransparency = 1; padL.Parent = frame
+        padL.Size = UDim2.new(0, 10, 1, 0); padL.BackgroundTransparency = 1; padL.Parent = inner
 
         local brandLbl   = MakeLabel("EchoX", true)
         MakeDivider()
@@ -242,7 +253,7 @@ task.spawn(function()
         local statsLbl   = MakeLabel("FPS: 0  Ping: 0ms  "..wmExecutor, false)
 
         local padR = Instance.new("Frame")
-        padR.Size = UDim2.new(0, 10, 1, 0); padR.BackgroundTransparency = 1; padR.Parent = frame
+        padR.Size = UDim2.new(0, 10, 1, 0); padR.BackgroundTransparency = 1; padR.Parent = inner
 
         local hue = 0
         RunService.Heartbeat:Connect(function(dt)
