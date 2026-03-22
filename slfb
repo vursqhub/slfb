@@ -23,6 +23,25 @@ local Stats            = game:GetService("Stats")
 
 local LocalPlayer = Players.LocalPlayer
 
+-- ============================================================
+-- PLATFORM / EXECUTOR DETECTION
+-- ============================================================
+local isMobile         = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local hasKeypress      = (typeof(keypress)            == "function")
+local hasFiresignal    = (typeof(firesignal)          == "function")
+local hasFireProximity = (typeof(fireproximityprompt) == "function")
+local hasSetClipboard  = (typeof(setclipboard)        == "function")
+local hasGethwid       = (typeof(gethwid)             == "function")
+local hasMachineId     = (typeof(machine_id)          == "function")
+
+local mobileJumpHeld = false
+if isMobile then
+    UserInputService.JumpRequest:Connect(function()
+        mobileJumpHeld = true
+        task.delay(0.2, function() mobileJumpHeld = false end)
+    end)
+end
+
 -- Safe GameFolder fetch
 local GameFolder
 task.spawn(function()
@@ -41,7 +60,6 @@ end)
 -- RARITY ORDER
 -- ============================================================
 local rarityList = {"Common","Rare","Epic","Legendary","Mythic","Secret","Celestial","Godly"}
-
 local rarityColors = {
     Common    = Color3.fromRGB(200, 200, 200),
     Rare      = Color3.fromRGB(  0, 120, 255),
@@ -112,6 +130,42 @@ local function TweenTo(targetPos, speed)
 end
 
 -- ============================================================
+-- CROSS-PLATFORM INTERACT
+-- ============================================================
+local function PressInteract()
+    if isPC and hasKeypress then
+        pcall(function() keypress(0x45); task.wait(0.05); keyrelease(0x45) end)
+    end
+    if hasFireProximity then
+        pcall(function()
+            local char = LocalPlayer.Character
+            if not char then return end
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if not hrp then return end
+            for _, obj in ipairs(workspace:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") then
+                    local pp = obj.Parent
+                    if pp and pp:IsA("BasePart") then
+                        local dist = (hrp.Position - pp.Position).Magnitude
+                        if dist <= (obj.MaxActivationDistance + 8) then
+                            obj.HoldDuration = 0
+                            fireproximityprompt(obj)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end
+
+local function SpamInteract(times, interval)
+    for _ = 1, (times or 8) do
+        PressInteract()
+        task.wait(interval or 0.05)
+    end
+end
+
+-- ============================================================
 -- GUI HELPERS
 -- ============================================================
 local function GetGuiPath(...)
@@ -126,15 +180,15 @@ end
 
 local function FireButton(btn)
     if not btn then return end
-    pcall(function() firesignal(btn.MouseButton1Click) end)
-    task.wait(0.05)
-    pcall(function() firesignal(btn.Activated) end)
-    task.wait(0.05)
-    pcall(function() firesignal(btn.MouseButton1Down, 0, 0) end)
-    task.wait(0.02)
-    pcall(function() firesignal(btn.MouseButton1Up, 0, 0) end)
-    task.wait(0.02)
+    if hasFiresignal then
+        pcall(function() firesignal(btn.MouseButton1Click) end) task.wait(0.05)
+        pcall(function() firesignal(btn.Activated) end) task.wait(0.05)
+        pcall(function() firesignal(btn.MouseButton1Down, 0, 0) end) task.wait(0.02)
+        pcall(function() firesignal(btn.MouseButton1Up, 0, 0) end) task.wait(0.02)
+    end
     pcall(function() btn:SimulateClick() end)
+    pcall(function() btn.MouseButton1Click:Fire() end)
+    pcall(function() btn.Activated:Fire() end)
 end
 
 local function FireAllButtons(root)
@@ -149,7 +203,6 @@ end
 -- INSTANT PICKUP
 -- ============================================================
 local instantPickup = false
-
 local function EnableInstantPickup()
     instantPickup = true
     local function apply(obj)
@@ -160,11 +213,7 @@ local function EnableInstantPickup()
         if instantPickup then pcall(apply, v) end
     end)
 end
-
-task.spawn(function()
-    task.wait(2)
-    EnableInstantPickup()
-end)
+task.spawn(function() task.wait(2); EnableInstantPickup() end)
 
 -- ============================================================
 -- REBIRTH HELPER
@@ -172,10 +221,7 @@ end)
 local function GetRebirthRewardPart()
     local result = nil
     pcall(function()
-        local worldModel = GetGuiPath(
-            "HUD","Rebirth","InsiderFrame","Insider",
-            "Brainrots","RebirthReward","ViewportFrame","WorldModel"
-        )
+        local worldModel = GetGuiPath("HUD","Rebirth","InsiderFrame","Insider","Brainrots","RebirthReward","ViewportFrame","WorldModel")
         if not worldModel then return end
         local rewardModel = worldModel:GetChildren()[1]
         if not rewardModel then return end
@@ -184,12 +230,11 @@ local function GetRebirthRewardPart()
         local brainrotsFolder = GameFolder:FindFirstChild("Brainrots")
         if not brainrotsFolder then return end
         for _, rarity in ipairs(rarityList) do
-            local rarityFolder = brainrotsFolder:FindFirstChild(rarity)
-            if rarityFolder then
-                local match = rarityFolder:FindFirstChild(rewardName)
+            local rf = brainrotsFolder:FindFirstChild(rarity)
+            if rf then
+                local match = rf:FindFirstChild(rewardName)
                 if match then
-                    local part = match:IsA("BasePart") and match
-                        or match:FindFirstChildWhichIsA("BasePart", true)
+                    local part = match:IsA("BasePart") and match or match:FindFirstChildWhichIsA("BasePart", true)
                     if part then result = part return end
                 end
             end
@@ -202,45 +247,32 @@ local function TryRebirth(farmSpeed, cooldownAfterTP, cooldownAfterE, homePositi
     pcall(function()
         local hud = GetGuiPath("HUD")
         if not hud then return end
-
         local rewardPart = GetRebirthRewardPart()
         if rewardPart then
             TweenTo(rewardPart.Position + Vector3.new(0, 3, 0), farmSpeed)
             task.wait(cooldownAfterTP)
-            for _ = 1, 8 do
-                pcall(function()
-                    keypress(0x45)
-                    task.wait(0.04)
-                    keyrelease(0x45)
-                    task.wait(0.04)
-                end)
-            end
+            SpamInteract(8, 0.05)
             task.wait(cooldownAfterE)
             TweenTo(homePosition, farmSpeed)
             task.wait(0.3)
         end
-
         local rebirthPopup = hud:FindFirstChild("Rebirth")
         if not rebirthPopup then return end
         local insiderFrame = rebirthPopup:FindFirstChild("InsiderFrame")
         if not insiderFrame then return end
         local confirmBtn = insiderFrame:FindFirstChild("Rebirth")
         if confirmBtn then FireAllButtons(confirmBtn) end
-
         for _, obj in ipairs(rebirthPopup:GetDescendants()) do
-            pcall(function()
-                if obj:IsA("RemoteEvent") then obj:FireServer() end
-            end)
+            pcall(function() if obj:IsA("RemoteEvent") then obj:FireServer() end end)
         end
     end)
 end
 
 -- ============================================================
--- NOCLIP HELPER
+-- NOCLIP
 -- ============================================================
 local noclipConn   = nil
 local noclipActive = false
-
 local function SetNoclip(state)
     noclipActive = state
     if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
@@ -267,31 +299,67 @@ end
 
 -- ============================================================
 -- AUTO CLAIM HELPERS
+-- Respawn → detect base spawn position → claim from there only
 -- ============================================================
-local function GetClaimTargets()
+local playerBasePosition = nil  -- set once on first enable
+
+local function DetectPlayerBase()
+    -- Respawn the character
+    LocalPlayer:LoadCharacter()
+    -- Wait for new character and HRP to exist and settle
+    task.wait(3)
+    pcall(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            playerBasePosition = hrp.Position
+        end
+    end)
+end
+
+local function GetClaimTargetsAtBase()
     local claims = {}
+    if not playerBasePosition then return claims end
     pcall(function()
         if not GameFolder then return end
         local plotsFolder = GameFolder:FindFirstChild("Plots")
         if not plotsFolder then return end
+
+        -- Find the plot closest to the player's base spawn
+        local closestPlot = nil
+        local closestDist = math.huge
         for _, plotIndex in ipairs({"1","2","3","4","5"}) do
             local plot = plotsFolder:FindFirstChild(plotIndex)
-            if not plot then continue end
-            local brainrotsFolder = plot:FindFirstChild("Brainrots")
-            if not brainrotsFolder then continue end
-            local brainrotNames = {}
-            for _, b in ipairs(brainrotsFolder:GetChildren()) do
-                brainrotNames[b.Name] = true
-            end
-            local placesFolder = plot:FindFirstChild("Places")
-            if not placesFolder then continue end
-            for _, place in ipairs(placesFolder:GetChildren()) do
-                if brainrotNames[place.Name] then
-                    local claimObj = place:FindFirstChild("Claim")
-                    if claimObj then
-                        claims[#claims+1] = claimObj
+            if plot then
+                local part = plot:IsA("BasePart") and plot or plot:FindFirstChildWhichIsA("BasePart", true)
+                if part then
+                    local d = (part.Position - playerBasePosition).Magnitude
+                    if d < closestDist then
+                        closestDist = d
+                        closestPlot = plot
                     end
                 end
+            end
+        end
+
+        if not closestPlot then return end
+
+        -- Get brainrot names from this plot only
+        local brainrotsFolder = closestPlot:FindFirstChild("Brainrots")
+        if not brainrotsFolder then return end
+        local brainrotNames = {}
+        for _, b in ipairs(brainrotsFolder:GetChildren()) do
+            brainrotNames[b.Name] = true
+        end
+
+        -- Get matched Claim objects from Places
+        local placesFolder = closestPlot:FindFirstChild("Places")
+        if not placesFolder then return end
+        for _, place in ipairs(placesFolder:GetChildren()) do
+            if brainrotNames[place.Name] then
+                local claimObj = place:FindFirstChild("Claim")
+                if claimObj then claims[#claims+1] = claimObj end
             end
         end
     end)
@@ -305,38 +373,20 @@ local function BringClaimToPlayer(claimObj)
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
         local targetCF = hrp.CFrame + Vector3.new(0, 2, 0)
-        if claimObj:IsA("BasePart") then
-            claimObj.CFrame = targetCF
-        end
+        if claimObj:IsA("BasePart") then claimObj.CFrame = targetCF end
         for _, part in ipairs(claimObj:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CFrame = targetCF
-            end
+            if part:IsA("BasePart") then part.CFrame = targetCF end
         end
         for _, desc in ipairs(claimObj:GetDescendants()) do
             if desc:IsA("ProximityPrompt") then
                 desc.HoldDuration = 0
-                pcall(function() fireproximityprompt(desc) end)
+                if hasFireProximity then pcall(function() fireproximityprompt(desc) end) end
             end
         end
         if claimObj:IsA("ProximityPrompt") then
-            pcall(function() fireproximityprompt(claimObj) end)
+            if hasFireProximity then pcall(function() fireproximityprompt(claimObj) end) end
         end
     end)
-end
-
--- ============================================================
--- SPAM E HELPER
--- ============================================================
-local function SpamE(times, interval)
-    for _ = 1, (times or 8) do
-        pcall(function()
-            keypress(0x45)
-            task.wait(interval or 0.04)
-            keyrelease(0x45)
-            task.wait(interval or 0.04)
-        end)
-    end
 end
 
 -- ============================================================
@@ -345,26 +395,14 @@ end
 local function GetExecutor()
     local name = "Unknown"
     pcall(function()
-        -- Most reliable: universal executor-name functions first
-        if identifyexecutor then
-            name = tostring(identifyexecutor())
-        elseif getexecutorname then
-            name = tostring(getexecutorname())
-        -- Fallback: check known executor globals
-        elseif syn and syn.request then
-            name = "Synapse X"
-        elseif KRNL_LOADED then
-            name = "KRNL"
-        elseif fluxus and fluxus.request then
-            name = "Fluxus"
-        elseif electron then
-            name = "Electron"
-        elseif pebc_loaded then
-            name = "Penguinware"
-        elseif MACSPLOIT_ALLOWED then
-            name = "MacSploit"
-        elseif _G.INFINITE_YIELD_LOADED then
-            name = "Scriptblox Exec"
+        if identifyexecutor then name = tostring(identifyexecutor())
+        elseif getexecutorname then name = tostring(getexecutorname())
+        elseif syn and syn.request then name = "Synapse X"
+        elseif KRNL_LOADED then name = "KRNL"
+        elseif fluxus and fluxus.request then name = "Fluxus"
+        elseif electron then name = "Electron"
+        elseif pebc_loaded then name = "Penguinware"
+        elseif MACSPLOIT_ALLOWED then name = "MacSploit"
         end
     end)
     return name
@@ -373,27 +411,113 @@ end
 local function GetHWID()
     local id = "Unavailable"
     pcall(function()
-        if gethwid then
-            id = tostring(gethwid())
-        elseif machine_id then
-            id = tostring(machine_id())
+        if hasGethwid then id = tostring(gethwid())
+        elseif hasMachineId then id = tostring(machine_id())
         end
     end)
     return id
 end
 
 local function GetDevice()
-    local device = "PC"
+    if isMobile then return "Mobile" end
+    if UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled then return "Console" end
+    return "PC"
+end
+
+-- ============================================================
+-- PLAYER ESP STORAGE
+-- ============================================================
+local playerESPActive    = false
+local playerESPConn      = nil
+local playerHighlights   = {}  -- [player] = Highlight instance
+local playerBillboards   = {}  -- [player] = BillboardGui instance
+
+local function RemovePlayerESP(player)
     pcall(function()
-        if UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled then
-            device = "Mobile"
-        elseif UserInputService.GamepadEnabled and not UserInputService.KeyboardEnabled then
-            device = "Console"
-        else
-            device = "PC"
+        if playerHighlights[player] then
+            playerHighlights[player]:Destroy()
+            playerHighlights[player] = nil
+        end
+        if playerBillboards[player] then
+            playerBillboards[player]:Destroy()
+            playerBillboards[player] = nil
         end
     end)
-    return device
+end
+
+local function CreatePlayerESP(player)
+    pcall(function()
+        if player == LocalPlayer then return end
+        local char = player.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        -- Highlight
+        if not playerHighlights[player] or not playerHighlights[player].Parent then
+            local hl = Instance.new("Highlight")
+            hl.FillColor       = Color3.fromRGB(255, 50, 50)
+            hl.OutlineColor    = Color3.fromRGB(255, 255, 255)
+            hl.FillTransparency    = 0.5
+            hl.OutlineTransparency = 0
+            hl.Adornee = char
+            hl.Parent  = char
+            playerHighlights[player] = hl
+        end
+
+        -- Billboard (name + distance)
+        if not playerBillboards[player] or not playerBillboards[player].Parent then
+            local bb = Instance.new("BillboardGui")
+            bb.AlwaysOnTop = true
+            bb.Size        = UDim2.new(0, 160, 0, 44)
+            bb.StudsOffset = Vector3.new(0, 3.5, 0)
+            bb.Adornee     = hrp
+            bb.Parent      = hrp
+
+            local nameLbl = Instance.new("TextLabel")
+            nameLbl.Name                  = "NameLabel"
+            nameLbl.Size                  = UDim2.new(1, 0, 0.55, 0)
+            nameLbl.BackgroundTransparency = 1
+            nameLbl.Text                  = player.DisplayName
+            nameLbl.TextColor3            = Color3.fromRGB(255, 80, 80)
+            nameLbl.TextStrokeTransparency = 0
+            nameLbl.TextScaled            = true
+            nameLbl.Font                  = Enum.Font.GothamBold
+            nameLbl.Parent                = bb
+
+            local distLbl = Instance.new("TextLabel")
+            distLbl.Name                  = "DistLabel"
+            distLbl.Size                  = UDim2.new(1, 0, 0.45, 0)
+            distLbl.Position              = UDim2.new(0, 0, 0.55, 0)
+            distLbl.BackgroundTransparency = 1
+            distLbl.Text                  = "0 studs"
+            distLbl.TextColor3            = Color3.fromRGB(255, 255, 255)
+            distLbl.TextStrokeTransparency = 0
+            distLbl.TextScaled            = true
+            distLbl.Font                  = Enum.Font.Gotham
+            distLbl.Parent                = bb
+
+            playerBillboards[player] = bb
+        end
+    end)
+end
+
+local function UpdatePlayerESPDistances()
+    local myChar = LocalPlayer.Character
+    local myHRP  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myHRP then return end
+
+    for player, bb in pairs(playerBillboards) do
+        pcall(function()
+            if not bb or not bb.Parent then return end
+            local theirChar = player.Character
+            local theirHRP  = theirChar and theirChar:FindFirstChild("HumanoidRootPart")
+            if not theirHRP then return end
+            local dist = math.floor((myHRP.Position - theirHRP.Position).Magnitude)
+            local distLbl = bb:FindFirstChild("DistLabel")
+            if distLbl then distLbl.Text = dist .. " studs" end
+        end)
+    end
 end
 
 -- ============================================================
@@ -402,47 +526,39 @@ end
 local InfoTab = Window:CreateTab("Info", nil)
 
 InfoTab:CreateSection("SLFB | EchoX")
-
 InfoTab:CreateParagraph({
     Title   = "Welcome",
-    Content = "Thanks for using SLFB | EchoX! This script is built and maintained for the community. Use it responsibly and enjoy the features!"
+    Content = "Thanks for using SLFB | EchoX! Built and maintained for the community. Use it responsibly and enjoy the features!"
 })
 
 InfoTab:CreateSection("Discord")
-
 InfoTab:CreateButton({
     Name     = "Copy Discord Invite",
     Callback = function()
-        pcall(function() setclipboard("https://discord.gg/R52NpWuyfd") end)
+        if hasSetClipboard then pcall(function() setclipboard("https://discord.gg/R52NpWuyfd") end) end
         Rayfield:Notify({ Title = "Discord", Content = "Copied: https://discord.gg/R52NpWuyfd", Duration = 4 })
     end,
 })
 
 InfoTab:CreateSection("Player Info")
+InfoTab:CreateParagraph({ Title = "User",     Content = tostring(LocalPlayer.Name) })
+InfoTab:CreateParagraph({ Title = "User ID",  Content = tostring(LocalPlayer.UserId) })
+InfoTab:CreateParagraph({ Title = "HWID",     Content = GetHWID() })
+InfoTab:CreateParagraph({ Title = "Executor", Content = GetExecutor() })
+InfoTab:CreateParagraph({ Title = "Device",   Content = GetDevice() })
+InfoTab:CreateParagraph({ Title = "Platform", Content = isMobile and "Mobile (Touch)" or "PC (Keyboard)" })
 
-InfoTab:CreateParagraph({ Title = "User",    Content = tostring(LocalPlayer.Name) })
-InfoTab:CreateParagraph({ Title = "User ID", Content = tostring(LocalPlayer.UserId) })
-InfoTab:CreateParagraph({ Title = "HWID",    Content = GetHWID() })
-InfoTab:CreateParagraph({ Title = "Executor",Content = GetExecutor() })
-InfoTab:CreateParagraph({ Title = "Device",  Content = GetDevice() })
-
--- Live FPS + Ping
 local fpsLabel  = InfoTab:CreateParagraph({ Title = "FPS",  Content = "Calculating..." })
 local pingLabel = InfoTab:CreateParagraph({ Title = "Ping", Content = "Calculating..." })
 
 local infoTimer  = 0
 local frameCount = 0
-
 RunService.Heartbeat:Connect(function(dt)
     frameCount += 1
     infoTimer  += dt
     if infoTimer < 1 then return end
-    local fps = frameCount
-    frameCount = 0
-    infoTimer  = 0
-    pcall(function()
-        fpsLabel:Set({ Title = "FPS", Content = tostring(fps) })
-    end)
+    local fps = frameCount; frameCount = 0; infoTimer = 0
+    pcall(function() fpsLabel:Set({ Title = "FPS", Content = tostring(fps) }) end)
     pcall(function()
         local ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
         pingLabel:Set({ Title = "Ping", Content = tostring(ping) .. " ms" })
@@ -455,11 +571,7 @@ end)
 local BrainrotsTab = Window:CreateTab("Brainrots", nil)
 
 BrainrotsTab:CreateSection("Brainrot Count (Live)")
-
-local countParagraph = BrainrotsTab:CreateParagraph({
-    Title   = "Brainrots in World",
-    Content = "Scanning..."
-})
+local countParagraph = BrainrotsTab:CreateParagraph({ Title = "Brainrots in World", Content = "Scanning..." })
 
 local countTimer = 0
 RunService.Heartbeat:Connect(function(dt)
@@ -469,57 +581,37 @@ RunService.Heartbeat:Connect(function(dt)
     pcall(function()
         if not GameFolder then return end
         local bf = GameFolder:FindFirstChild("Brainrots")
-        if not bf then
-            countParagraph:Set({ Title = "Brainrots in World", Content = "Brainrots folder not found." })
-            return
-        end
+        if not bf then countParagraph:Set({ Title = "Brainrots in World", Content = "Brainrots folder not found." }) return end
         local parts = {}
         for _, r in ipairs(rarityList) do
             local f = bf:FindFirstChild(r)
-            if f then
-                local n = #f:GetChildren()
-                if n > 0 then parts[#parts+1] = r .. ": " .. n end
-            end
+            if f then local n = #f:GetChildren(); if n > 0 then parts[#parts+1] = r..": "..n end end
         end
-        countParagraph:Set({
-            Title   = "Brainrots in World",
-            Content = #parts > 0 and table.concat(parts, " | ") or "None found."
-        })
+        countParagraph:Set({ Title = "Brainrots in World", Content = #parts > 0 and table.concat(parts, " | ") or "None found." })
     end)
 end)
 
 BrainrotsTab:CreateSection("Brainrot ESP")
-
 for _, rarity in ipairs(rarityList) do
     local tag = rarity:lower()
     BrainrotsTab:CreateToggle({
-        Name         = "Show " .. rarity,
-        CurrentValue = false,
-        Flag         = "ESP_" .. rarity,
-        Callback     = function(state)
-            if ESPConnections[rarity] then
-                ESPConnections[rarity]:Disconnect()
-                ESPConnections[rarity] = nil
-            end
+        Name = "Show "..rarity, CurrentValue = false, Flag = "ESP_"..rarity,
+        Callback = function(state)
+            if ESPConnections[rarity] then ESPConnections[rarity]:Disconnect(); ESPConnections[rarity] = nil end
             ClearESPByTag(tag)
             if state then
                 local timer = 0
                 ESPConnections[rarity] = RunService.Heartbeat:Connect(function(dt)
-                    timer += dt
-                    if timer < 0.5 then return end
-                    timer = 0
+                    timer += dt; if timer < 0.5 then return end; timer = 0
                     pcall(function()
                         ClearESPByTag(tag)
                         if not GameFolder then return end
-                        local bf = GameFolder:FindFirstChild("Brainrots")
-                        if not bf then return end
-                        local rf = bf:FindFirstChild(rarity)
-                        if not rf then return end
+                        local bf = GameFolder:FindFirstChild("Brainrots"); if not bf then return end
+                        local rf = bf:FindFirstChild(rarity); if not rf then return end
                         for _, obj in ipairs(rf:GetChildren()) do
-                            local part = obj:IsA("BasePart") and obj
-                                or obj:FindFirstChildWhichIsA("BasePart", true)
+                            local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
                             if part then
-                                local key = tag .. "_" .. obj.Name
+                                local key = tag.."_"..obj.Name
                                 if not ESPBillboards[key] or not ESPBillboards[key].Parent then
                                     ESPBillboards[key] = CreateBillboard(part, obj.Name, rarityColors[rarity])
                                 end
@@ -533,31 +625,24 @@ for _, rarity in ipairs(rarityList) do
 end
 
 BrainrotsTab:CreateSection("LuckyBlock ESP")
-
 local LuckyBlockESPConn = nil
 BrainrotsTab:CreateToggle({
-    Name         = "LuckyBlock Name ESP",
-    CurrentValue = false,
-    Flag         = "LuckyBlockESP",
-    Callback     = function(state)
+    Name = "LuckyBlock Name ESP", CurrentValue = false, Flag = "LuckyBlockESP",
+    Callback = function(state)
         if LuckyBlockESPConn then LuckyBlockESPConn:Disconnect(); LuckyBlockESPConn = nil end
         ClearESPByTag("luckyblock")
         if state then
             local timer = 0
             LuckyBlockESPConn = RunService.Heartbeat:Connect(function(dt)
-                timer += dt
-                if timer < 0.5 then return end
-                timer = 0
+                timer += dt; if timer < 0.5 then return end; timer = 0
                 pcall(function()
                     ClearESPByTag("luckyblock")
                     if not GameFolder then return end
-                    local folder = GameFolder:FindFirstChild("LuckyBlocks")
-                    if not folder then return end
+                    local folder = GameFolder:FindFirstChild("LuckyBlocks"); if not folder then return end
                     for _, child in ipairs(folder:GetChildren()) do
-                        local part = child:IsA("BasePart") and child
-                            or child:FindFirstChildWhichIsA("BasePart", true)
+                        local part = child:IsA("BasePart") and child or child:FindFirstChildWhichIsA("BasePart", true)
                         if part then
-                            local key = "luckyblock_" .. child.Name
+                            local key = "luckyblock_"..child.Name
                             if not ESPBillboards[key] or not ESPBillboards[key].Parent then
                                 ESPBillboards[key] = CreateBillboard(part, child.Name, Color3.fromRGB(255, 230, 0))
                             end
@@ -566,6 +651,82 @@ BrainrotsTab:CreateToggle({
                 end)
             end)
         end
+    end,
+})
+
+-- Player ESP section inside Brainrots tab
+BrainrotsTab:CreateSection("Player ESP")
+BrainrotsTab:CreateToggle({
+    Name         = "Player ESP",
+    CurrentValue = false,
+    Flag         = "PlayerESP",
+    Callback     = function(state)
+        playerESPActive = state
+
+        if playerESPConn then playerESPConn:Disconnect(); playerESPConn = nil end
+
+        if not state then
+            -- Clean up all ESP
+            for player in pairs(playerHighlights) do RemovePlayerESP(player) end
+            for player in pairs(playerBillboards)  do RemovePlayerESP(player) end
+            return
+        end
+
+        -- Build ESP for existing players
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                CreatePlayerESP(player)
+            end
+        end
+
+        -- Handle new players joining
+        Players.PlayerAdded:Connect(function(player)
+            if not playerESPActive then return end
+            player.CharacterAdded:Connect(function()
+                task.wait(1)
+                if playerESPActive then CreatePlayerESP(player) end
+            end)
+        end)
+
+        -- Handle characters respawning
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                player.CharacterAdded:Connect(function()
+                    task.wait(1)
+                    RemovePlayerESP(player)
+                    if playerESPActive then CreatePlayerESP(player) end
+                end)
+            end
+        end
+
+        -- Update loop: refresh ESP + distances every 0.5s
+        local timer = 0
+        playerESPConn = RunService.Heartbeat:Connect(function(dt)
+            timer += dt
+            if timer < 0.5 then
+                UpdatePlayerESPDistances()
+                return
+            end
+            timer = 0
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer then
+                    -- Re-create if missing (e.g. after respawn)
+                    local char = player.Character
+                    if char then
+                        if not playerHighlights[player] or not playerHighlights[player].Parent then
+                            RemovePlayerESP(player)
+                            CreatePlayerESP(player)
+                        end
+                    else
+                        RemovePlayerESP(player)
+                    end
+                end
+            end
+            -- Clean up ESP for players who left
+            for player in pairs(playerHighlights) do
+                if not player.Parent then RemovePlayerESP(player) end
+            end
+        end)
     end,
 })
 
@@ -583,43 +744,39 @@ local autoRebirthConn = nil
 local autoSpeedConn   = nil
 local autoCarryConn   = nil
 local autoClaimConn   = nil
+local autoCoinConn    = nil
+local autoCoinThread  = nil
+local autoCoinRunning = false
+local autoCoinSpeed   = 100
 
 local cooldownBeforeTP  = 0.4
 local cooldownAfterTP   = 0.4
 local cooldownAfterE    = 0.4
 local cooldownAfterHome = 0.4
-
 local selectedSpeedUpgrade = "1"
 local homePosition = Vector3.new(-40.52, 4.26, -38.55)
 
 AutofarmTab:CreateSection("⚠️ Requirements")
 AutofarmTab:CreateParagraph({
     Title   = "IMPORTANT – Read Before Use",
-    Content = "Instant Pickup is automatically enabled on load. Noclip is automatically toggled with Autofarm."
+    Content = "Instant Pickup is automatically enabled on load. Noclip is automatically toggled with Autofarm. Mobile: ProximityPrompts are fired automatically."
 })
 
 AutofarmTab:CreateSection("Anti-Kick")
 AutofarmTab:CreateToggle({
-    Name         = "Anti-Kick",
-    CurrentValue = false,
-    Flag         = "AntiKick",
-    Callback     = function(state)
+    Name = "Anti-Kick", CurrentValue = false, Flag = "AntiKick",
+    Callback = function(state)
         if antiKickConn then antiKickConn:Disconnect(); antiKickConn = nil end
         if state then
             antiKickConn = RunService.Heartbeat:Connect(function()
                 pcall(function()
-                    local char = LocalPlayer.Character
-                    if not char then return end
+                    local char = LocalPlayer.Character; if not char then return end
                     local hrp = char:FindFirstChild("HumanoidRootPart")
                     local hum = char:FindFirstChildOfClass("Humanoid")
                     if not hrp or not hum then return end
                     local vel = hrp.AssemblyLinearVelocity
-                    if vel.Magnitude > 500 then
-                        hrp.AssemblyLinearVelocity = vel.Unit * 500
-                    end
-                    if hum:GetState() ~= Enum.HumanoidStateType.Dead then
-                        hum:ChangeState(Enum.HumanoidStateType.Running)
-                    end
+                    if vel.Magnitude > 500 then hrp.AssemblyLinearVelocity = vel.Unit * 500 end
+                    if hum:GetState() ~= Enum.HumanoidStateType.Dead then hum:ChangeState(Enum.HumanoidStateType.Running) end
                 end)
             end)
         end
@@ -629,17 +786,13 @@ AutofarmTab:CreateToggle({
 
 AutofarmTab:CreateSection("Auto-Rebirth")
 AutofarmTab:CreateToggle({
-    Name         = "Auto-Rebirth",
-    CurrentValue = false,
-    Flag         = "AutoRebirth",
-    Callback     = function(state)
+    Name = "Auto-Rebirth", CurrentValue = false, Flag = "AutoRebirth",
+    Callback = function(state)
         if autoRebirthConn then autoRebirthConn:Disconnect(); autoRebirthConn = nil end
         if state then
             local rbTimer = 0
             autoRebirthConn = RunService.Heartbeat:Connect(function(dt)
-                rbTimer += dt
-                if rbTimer < 2 then return end
-                rbTimer = 0
+                rbTimer += dt; if rbTimer < 2 then return end; rbTimer = 0
                 TryRebirth(farmSpeed, cooldownAfterTP, cooldownAfterE, homePosition)
             end)
         end
@@ -649,29 +802,19 @@ AutofarmTab:CreateToggle({
 
 AutofarmTab:CreateSection("Auto Speed")
 AutofarmTab:CreateDropdown({
-    Name          = "Upgrade Amount",
-    Options       = {"1", "5", "10"},
-    CurrentOption = {"1"},
-    Flag          = "SpeedUpgradeAmount",
-    Callback      = function(selected)
-        selectedSpeedUpgrade = type(selected) == "table" and selected[1] or selected
-    end,
+    Name = "Upgrade Amount", Options = {"1","5","10"}, CurrentOption = {"1"}, Flag = "SpeedUpgradeAmount",
+    Callback = function(selected) selectedSpeedUpgrade = type(selected) == "table" and selected[1] or selected end,
 })
 AutofarmTab:CreateToggle({
-    Name         = "Auto Speed",
-    CurrentValue = false,
-    Flag         = "AutoSpeed",
-    Callback     = function(state)
+    Name = "Auto Speed", CurrentValue = false, Flag = "AutoSpeed",
+    Callback = function(state)
         if autoSpeedConn then autoSpeedConn:Disconnect(); autoSpeedConn = nil end
         if state then
             local spTimer = 0
             autoSpeedConn = RunService.Heartbeat:Connect(function(dt)
-                spTimer += dt
-                if spTimer < 0.1 then return end
-                spTimer = 0
+                spTimer += dt; if spTimer < 0.1 then return end; spTimer = 0
                 pcall(function()
-                    local insiderFrame = GetGuiPath("HUD","Upgrades","InsiderFrame")
-                    if not insiderFrame then return end
+                    local insiderFrame = GetGuiPath("HUD","Upgrades","InsiderFrame"); if not insiderFrame then return end
                     local btn = insiderFrame:FindFirstChild(selectedSpeedUpgrade)
                     if btn then FireAllButtons(btn) end
                 end)
@@ -683,17 +826,13 @@ AutofarmTab:CreateToggle({
 
 AutofarmTab:CreateSection("Auto Carry")
 AutofarmTab:CreateToggle({
-    Name         = "Auto Carry",
-    CurrentValue = false,
-    Flag         = "AutoCarry",
-    Callback     = function(state)
+    Name = "Auto Carry", CurrentValue = false, Flag = "AutoCarry",
+    Callback = function(state)
         if autoCarryConn then autoCarryConn:Disconnect(); autoCarryConn = nil end
         if state then
             local carryTimer = 0
             autoCarryConn = RunService.Heartbeat:Connect(function(dt)
-                carryTimer += dt
-                if carryTimer < 0.1 then return end
-                carryTimer = 0
+                carryTimer += dt; if carryTimer < 0.1 then return end; carryTimer = 0
                 pcall(function()
                     local moneyBtn = GetGuiPath("HUD","CarryUpgrades","InsiderFrame","Carry","MoneyButton")
                     if moneyBtn then FireAllButtons(moneyBtn) end
@@ -704,7 +843,12 @@ AutofarmTab:CreateToggle({
     end,
 })
 
+-- ── Auto Claim ────────────────────────────────────────────
 AutofarmTab:CreateSection("Auto Claim")
+AutofarmTab:CreateParagraph({
+    Title   = "Auto Claim Info",
+    Content = "On enable: resets your character, detects your base spawn point, then continuously pulls all matching Claim objects from your base's plot to you."
+})
 AutofarmTab:CreateToggle({
     Name         = "Auto Claim",
     CurrentValue = false,
@@ -712,82 +856,111 @@ AutofarmTab:CreateToggle({
     Callback     = function(state)
         if autoClaimConn then autoClaimConn:Disconnect(); autoClaimConn = nil end
         if state then
-            autoClaimConn = RunService.Heartbeat:Connect(function()
-                pcall(function()
-                    local claims = GetClaimTargets()
-                    for _, claimObj in ipairs(claims) do
-                        BringClaimToPlayer(claimObj)
-                    end
+            Rayfield:Notify({ Title = "Auto Claim", Content = "Resetting to detect base...", Duration = 3 })
+            task.spawn(function()
+                -- Respawn and detect base
+                DetectPlayerBase()
+                if not playerBasePosition then
+                    Rayfield:Notify({ Title = "Auto Claim", Content = "Failed to detect base. Try again.", Duration = 4 })
+                    return
+                end
+                Rayfield:Notify({ Title = "Auto Claim", Content = "Base detected! Pulling claims to you.", Duration = 3 })
+                -- Start the claim loop (Heartbeat, uses fixed base plot)
+                autoClaimConn = RunService.Heartbeat:Connect(function()
+                    pcall(function()
+                        local claims = GetClaimTargetsAtBase()
+                        for _, claimObj in ipairs(claims) do
+                            BringClaimToPlayer(claimObj)
+                        end
+                    end)
                 end)
             end)
-            Rayfield:Notify({ Title = "Auto Claim", Content = "Started – pulling claims to you.", Duration = 3 })
         else
             Rayfield:Notify({ Title = "Auto Claim", Content = "Stopped.", Duration = 3 })
         end
     end,
 })
 
+-- ── Auto Coin ─────────────────────────────────────────────
+AutofarmTab:CreateSection("Auto Coin")
+AutofarmTab:CreateSlider({
+    Name = "Coin Tween Speed", Range = {10, 1000}, Increment = 10, CurrentValue = 100, Flag = "CoinSpeed",
+    Callback = function(val) autoCoinSpeed = val end,
+})
+AutofarmTab:CreateToggle({
+    Name         = "Auto Coin",
+    CurrentValue = false,
+    Flag         = "AutoCoin",
+    Callback     = function(state)
+        autoCoinRunning = state
+        if autoCoinThread then task.cancel(autoCoinThread); autoCoinThread = nil end
+        if state then
+            autoCoinThread = task.spawn(function()
+                while autoCoinRunning do
+                    pcall(function()
+                        -- Collect all BaseParts/Models named "Coin" in workspace
+                        local coins = {}
+                        for _, obj in ipairs(workspace:GetDescendants()) do
+                            if obj.Name == "Coin" then
+                                local part = obj:IsA("BasePart") and obj
+                                    or obj:FindFirstChildWhichIsA("BasePart", true)
+                                if part then coins[#coins+1] = part end
+                            end
+                        end
+
+                        if #coins == 0 then
+                            task.wait(1)
+                            return
+                        end
+
+                        for _, part in ipairs(coins) do
+                            if not autoCoinRunning then break end
+                            if not part or not part.Parent then continue end
+                            TweenTo(part.Position + Vector3.new(0, 2, 0), autoCoinSpeed)
+                            task.wait(0.15)
+                            -- Fire any ProximityPrompts on the coin
+                            if hasFireProximity then
+                                for _, desc in ipairs(part.Parent:GetDescendants()) do
+                                    if desc:IsA("ProximityPrompt") then
+                                        desc.HoldDuration = 0
+                                        pcall(function() fireproximityprompt(desc) end)
+                                    end
+                                end
+                            end
+                            PressInteract()
+                            task.wait(0.1)
+                        end
+                    end)
+                    task.wait(0.1)
+                end
+            end)
+            Rayfield:Notify({ Title = "Auto Coin", Content = "Started.", Duration = 3 })
+        else
+            Rayfield:Notify({ Title = "Auto Coin", Content = "Stopped.", Duration = 3 })
+        end
+    end,
+})
+
+-- ── Cooldowns ─────────────────────────────────────────────
 AutofarmTab:CreateSection("Cooldown Settings")
-AutofarmTab:CreateSlider({
-    Name         = "Cooldown Before TP (s)",
-    Range        = {0.1, 5},
-    Increment    = 0.1,
-    CurrentValue = 0.4,
-    Flag         = "CooldownBeforeTP",
-    Callback     = function(val) cooldownBeforeTP = val end,
-})
-AutofarmTab:CreateSlider({
-    Name         = "Cooldown After TP (s)",
-    Range        = {0.1, 5},
-    Increment    = 0.1,
-    CurrentValue = 0.4,
-    Flag         = "CooldownAfterTP",
-    Callback     = function(val) cooldownAfterTP = val end,
-})
-AutofarmTab:CreateSlider({
-    Name         = "Cooldown After E Press (s)",
-    Range        = {0.1, 5},
-    Increment    = 0.1,
-    CurrentValue = 0.4,
-    Flag         = "CooldownAfterE",
-    Callback     = function(val) cooldownAfterE = val end,
-})
-AutofarmTab:CreateSlider({
-    Name         = "Cooldown After Home TP (s)",
-    Range        = {0.1, 5},
-    Increment    = 0.1,
-    CurrentValue = 0.4,
-    Flag         = "CooldownAfterHome",
-    Callback     = function(val) cooldownAfterHome = val end,
-})
+AutofarmTab:CreateSlider({ Name = "Cooldown Before TP (s)",     Range = {0.1,5}, Increment = 0.1, CurrentValue = 0.4, Flag = "CooldownBeforeTP",  Callback = function(v) cooldownBeforeTP  = v end })
+AutofarmTab:CreateSlider({ Name = "Cooldown After TP (s)",      Range = {0.1,5}, Increment = 0.1, CurrentValue = 0.4, Flag = "CooldownAfterTP",   Callback = function(v) cooldownAfterTP   = v end })
+AutofarmTab:CreateSlider({ Name = "Cooldown After E Press (s)", Range = {0.1,5}, Increment = 0.1, CurrentValue = 0.4, Flag = "CooldownAfterE",    Callback = function(v) cooldownAfterE    = v end })
+AutofarmTab:CreateSlider({ Name = "Cooldown After Home TP (s)", Range = {0.1,5}, Increment = 0.1, CurrentValue = 0.4, Flag = "CooldownAfterHome", Callback = function(v) cooldownAfterHome = v end })
 
 AutofarmTab:CreateSection("Settings")
 AutofarmTab:CreateDropdown({
-    Name          = "Select Zone",
-    Options       = rarityList,
-    CurrentOption = {"Common"},
-    Flag          = "AutofarmZone",
-    Callback      = function(selected)
-        selectedZone = type(selected) == "table" and selected[1] or selected
-    end,
+    Name = "Select Zone", Options = rarityList, CurrentOption = {"Common"}, Flag = "AutofarmZone",
+    Callback = function(selected) selectedZone = type(selected) == "table" and selected[1] or selected end,
 })
-AutofarmTab:CreateSlider({
-    Name         = "Tween Speed",
-    Range        = {10, 1000},
-    Increment    = 10,
-    CurrentValue = 50,
-    Flag         = "FarmSpeed",
-    Callback     = function(val) farmSpeed = val end,
-})
+AutofarmTab:CreateSlider({ Name = "Tween Speed", Range = {10,1000}, Increment = 10, CurrentValue = 50, Flag = "FarmSpeed", Callback = function(v) farmSpeed = v end })
 
 local function GetBrainrotsInZone(zone)
     local list = {}
     pcall(function()
         if not GameFolder then return end
-        local bf = GameFolder:FindFirstChild("Brainrots")
-        if not bf then return end
-        local zf = bf:FindFirstChild(zone)
-        if not zf then return end
+        local bf = GameFolder:FindFirstChild("Brainrots"); if not bf then return end
+        local zf = bf:FindFirstChild(zone); if not zf then return end
         for _, obj in ipairs(zf:GetChildren()) do
             local part = obj:IsA("BasePart") and obj or obj:FindFirstChildWhichIsA("BasePart", true)
             if part then list[#list+1] = part end
@@ -800,7 +973,7 @@ local function RunAutofarm()
     while autofarmRunning do
         local brainrots = GetBrainrotsInZone(selectedZone)
         if #brainrots == 0 then
-            Rayfield:Notify({ Title = "Autofarm", Content = "No brainrots in " .. selectedZone .. ".", Duration = 3 })
+            Rayfield:Notify({ Title = "Autofarm", Content = "No brainrots in "..selectedZone..".", Duration = 3 })
             task.wait(2)
         else
             for _, part in ipairs(brainrots) do
@@ -808,7 +981,7 @@ local function RunAutofarm()
                 task.wait(cooldownBeforeTP)
                 TweenTo(part.Position + Vector3.new(0, 3, 0), farmSpeed)
                 task.wait(cooldownAfterTP)
-                SpamE(8, 0.04)
+                SpamInteract(8, 0.05)
                 task.wait(cooldownAfterE)
                 TweenTo(homePosition, farmSpeed)
                 task.wait(cooldownAfterHome)
@@ -820,10 +993,8 @@ end
 
 AutofarmTab:CreateSection("Autofarm")
 AutofarmTab:CreateToggle({
-    Name         = "Start Autofarm",
-    CurrentValue = false,
-    Flag         = "AutofarmToggle",
-    Callback     = function(state)
+    Name = "Start Autofarm", CurrentValue = false, Flag = "AutofarmToggle",
+    Callback = function(state)
         autofarmRunning = state
         SetNoclip(state)
         if state then
@@ -845,18 +1016,17 @@ local WorldTab = Window:CreateTab("World", nil)
 
 WorldTab:CreateSection("Lavas")
 WorldTab:CreateButton({
-    Name     = "Remove All Lavas",
+    Name = "Remove All Lavas",
     Callback = function()
         pcall(function()
             local folder = GameFolder and GameFolder:FindFirstChild("Lavas")
             if folder then
                 local removed = 0
-                -- Indices 1-9
                 for i = 1, 9 do
                     local lava = folder:FindFirstChild(tostring(i))
                     if lava then lava:Destroy(); removed += 1 end
                 end
-                Rayfield:Notify({ Title = "Lavas", Content = "Removed " .. removed .. " lava(s).", Duration = 3 })
+                Rayfield:Notify({ Title = "Lavas", Content = "Removed "..removed.." lava(s).", Duration = 3 })
             else
                 Rayfield:Notify({ Title = "Lavas", Content = "Lavas folder not found.", Duration = 3 })
             end
@@ -866,7 +1036,7 @@ WorldTab:CreateButton({
 
 WorldTab:CreateSection("VIP Doors")
 WorldTab:CreateButton({
-    Name     = "Remove All VIP Doors",
+    Name = "Remove All VIP Doors",
     Callback = function()
         pcall(function()
             local folder = GameFolder and GameFolder:FindFirstChild("VIPDoors")
@@ -875,7 +1045,7 @@ WorldTab:CreateButton({
                 for _, child in ipairs(folder:GetChildren()) do
                     if child.Name == "VIPDoor" then child:Destroy(); removed += 1 end
                 end
-                Rayfield:Notify({ Title = "VIPDoors", Content = "Removed " .. removed .. " VIP Door(s).", Duration = 3 })
+                Rayfield:Notify({ Title = "VIPDoors", Content = "Removed "..removed.." VIP Door(s).", Duration = 3 })
             else
                 Rayfield:Notify({ Title = "VIPDoors", Content = "VIPDoors folder not found.", Duration = 3 })
             end
@@ -891,12 +1061,11 @@ local TeleportTab = Window:CreateTab("Teleport", nil)
 TeleportTab:CreateSection("Plots")
 for i = 1, 5 do
     TeleportTab:CreateButton({
-        Name     = "Teleport to Plot " .. i,
+        Name = "Teleport to Plot "..i,
         Callback = function()
             pcall(function()
                 if not GameFolder then return end
-                local folder = GameFolder:FindFirstChild("Plots")
-                if not folder then return end
+                local folder = GameFolder:FindFirstChild("Plots"); if not folder then return end
                 local plot = folder:FindFirstChild(tostring(i))
                 if plot then
                     local part = plot:IsA("BasePart") and plot or plot:FindFirstChildWhichIsA("BasePart", true)
@@ -907,7 +1076,7 @@ for i = 1, 5 do
                         end
                     end
                 else
-                    Rayfield:Notify({ Title = "Plots", Content = "Plot " .. i .. " not found.", Duration = 3 })
+                    Rayfield:Notify({ Title = "Plots", Content = "Plot "..i.." not found.", Duration = 3 })
                 end
             end)
         end,
@@ -916,7 +1085,7 @@ end
 
 TeleportTab:CreateSection("Locations")
 TeleportTab:CreateButton({
-    Name     = "Teleport to Forbidden Fuse",
+    Name = "Teleport to Forbidden Fuse",
     Callback = function()
         pcall(function()
             local char = LocalPlayer.Character
@@ -936,16 +1105,13 @@ local MovementTab = Window:CreateTab("Movement", nil)
 MovementTab:CreateSection("Infinite Jump")
 local infJumpConn = nil
 MovementTab:CreateToggle({
-    Name         = "Infinite Jump",
-    CurrentValue = false,
-    Flag         = "InfJump",
-    Callback     = function(state)
+    Name = "Infinite Jump", CurrentValue = false, Flag = "InfJump",
+    Callback = function(state)
         if infJumpConn then infJumpConn:Disconnect(); infJumpConn = nil end
         if state then
             infJumpConn = UserInputService.JumpRequest:Connect(function()
                 pcall(function()
-                    local char = LocalPlayer.Character
-                    if not char then return end
+                    local char = LocalPlayer.Character; if not char then return end
                     local hum = char:FindFirstChildOfClass("Humanoid")
                     if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
                 end)
@@ -957,37 +1123,21 @@ MovementTab:CreateToggle({
 MovementTab:CreateSection("TP Walk")
 local tpWalkSpeed = 80
 local tpWalkConn  = nil
-
-MovementTab:CreateSlider({
-    Name         = "TP Walk Speed",
-    Range        = {20, 1000},
-    Increment    = 10,
-    CurrentValue = 80,
-    Flag         = "TPWalkSpeed",
-    Callback     = function(val) tpWalkSpeed = val end,
-})
+MovementTab:CreateSlider({ Name = "TP Walk Speed", Range = {20,1000}, Increment = 10, CurrentValue = 80, Flag = "TPWalkSpeed", Callback = function(v) tpWalkSpeed = v end })
 MovementTab:CreateToggle({
-    Name         = "TP Walk",
-    CurrentValue = false,
-    Flag         = "TPWalk",
-    Callback     = function(state)
+    Name = "TP Walk", CurrentValue = false, Flag = "TPWalk",
+    Callback = function(state)
         if tpWalkConn then tpWalkConn:Disconnect(); tpWalkConn = nil end
         if state then
             tpWalkConn = RunService.Heartbeat:Connect(function()
                 pcall(function()
-                    local char = LocalPlayer.Character
-                    if not char then return end
+                    local char = LocalPlayer.Character; if not char then return end
                     local hrp = char:FindFirstChild("HumanoidRootPart")
                     local hum = char:FindFirstChildOfClass("Humanoid")
                     if not hrp or not hum then return end
-                    local md = hum.MoveDirection
-                    if md.Magnitude < 0.1 then return end
+                    local md = hum.MoveDirection; if md.Magnitude < 0.1 then return end
                     local target = hrp.Position + md * (tpWalkSpeed * 0.05)
-                    TweenService:Create(
-                        hrp,
-                        TweenInfo.new(0.05, Enum.EasingStyle.Linear),
-                        { CFrame = CFrame.new(target) * (hrp.CFrame - hrp.CFrame.Position) }
-                    ):Play()
+                    TweenService:Create(hrp, TweenInfo.new(0.05, Enum.EasingStyle.Linear), { CFrame = CFrame.new(target) * (hrp.CFrame - hrp.CFrame.Position) }):Play()
                 end)
             end)
         end
@@ -995,6 +1145,12 @@ MovementTab:CreateToggle({
 })
 
 MovementTab:CreateSection("Fly")
+if isMobile then
+    MovementTab:CreateParagraph({
+        Title   = "Mobile Fly Controls",
+        Content = "Use joystick to move. Jump button = go up. Idle = slowly sink."
+    })
+end
 
 local flySpeed  = 50
 local flyActive = false
@@ -1006,53 +1162,45 @@ local function StopFly()
     if flyConn then flyConn:Disconnect(); flyConn = nil end
     flyVel = Vector3.zero
     pcall(function()
-        local char = LocalPlayer.Character
-        if not char then return end
+        local char = LocalPlayer.Character; if not char then return end
         local hum = char:FindFirstChildOfClass("Humanoid")
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if hum then hum.PlatformStand = false; hum.AutoRotate = true end
-        if hrp then
-            hrp.AssemblyLinearVelocity  = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-        end
+        if hrp then hrp.AssemblyLinearVelocity = Vector3.zero; hrp.AssemblyAngularVelocity = Vector3.zero end
     end)
 end
 
 local function StartFly()
     pcall(function()
-        local char = LocalPlayer.Character
-        if not char then return end
+        local char = LocalPlayer.Character; if not char then return end
         local hrp = char:FindFirstChild("HumanoidRootPart")
         local hum = char:FindFirstChildOfClass("Humanoid")
         if not hrp or not hum then return end
-        flyActive = true
-        flyVel    = Vector3.zero
-        hum.PlatformStand = true
-        hum.AutoRotate    = false
+        flyActive = true; flyVel = Vector3.zero
+        hum.PlatformStand = true; hum.AutoRotate = false
         if flyConn then flyConn:Disconnect() end
         flyConn = RunService.RenderStepped:Connect(function(dt)
             pcall(function()
-                local c    = LocalPlayer.Character
-                if not c then StopFly() return end
+                local c = LocalPlayer.Character; if not c then StopFly() return end
                 local root = c:FindFirstChild("HumanoidRootPart")
                 local h    = c:FindFirstChildOfClass("Humanoid")
                 if not root or not h then StopFly() return end
-                h.PlatformStand = true
-                h.AutoRotate    = false
-                local cam   = workspace.CurrentCamera
-                local cf    = cam.CFrame
+                h.PlatformStand = true; h.AutoRotate = false
                 local input = Vector3.zero
-                if UserInputService:IsKeyDown(Enum.KeyCode.W) then input += cf.LookVector  end
-                if UserInputService:IsKeyDown(Enum.KeyCode.S) then input -= cf.LookVector  end
-                if UserInputService:IsKeyDown(Enum.KeyCode.A) then input -= cf.RightVector end
-                if UserInputService:IsKeyDown(Enum.KeyCode.D) then input += cf.RightVector end
-                if UserInputService:IsKeyDown(Enum.KeyCode.Space)     then input += Vector3.new(0,1,0) end
-                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then input -= Vector3.new(0,1,0) end
-                if input.Magnitude > 0 then
-                    flyVel = flyVel:Lerp(input.Unit * flySpeed, 0.3)
+                if isMobile then
+                    local md = h.MoveDirection
+                    if md.Magnitude > 0 then input = Vector3.new(md.X, 0, md.Z) end
+                    input = input + Vector3.new(0, mobileJumpHeld and 1 or -0.3, 0)
                 else
-                    flyVel = flyVel:Lerp(Vector3.zero, 0.2)
+                    local cam = workspace.CurrentCamera; local cf = cam.CFrame
+                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then input += cf.LookVector  end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then input -= cf.LookVector  end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then input -= cf.RightVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then input += cf.RightVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.Space)     then input += Vector3.new(0,1,0) end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then input -= Vector3.new(0,1,0) end
                 end
+                flyVel = input.Magnitude > 0 and flyVel:Lerp(input.Unit * flySpeed, 0.3) or flyVel:Lerp(Vector3.zero, 0.2)
                 root.CFrame = root.CFrame + flyVel * dt
                 root.AssemblyLinearVelocity  = Vector3.zero
                 root.AssemblyAngularVelocity = Vector3.zero
@@ -1061,21 +1209,10 @@ local function StartFly()
     end)
 end
 
-MovementTab:CreateSlider({
-    Name         = "Fly Speed",
-    Range        = {10, 1000},
-    Increment    = 10,
-    CurrentValue = 50,
-    Flag         = "FlySpeed",
-    Callback     = function(val) flySpeed = val end,
-})
+MovementTab:CreateSlider({ Name = "Fly Speed", Range = {10,1000}, Increment = 10, CurrentValue = 50, Flag = "FlySpeed", Callback = function(v) flySpeed = v end })
 MovementTab:CreateToggle({
-    Name         = "Fly",
-    CurrentValue = false,
-    Flag         = "FlyToggle",
-    Callback     = function(state)
-        if state then StartFly() else StopFly() end
-    end,
+    Name = "Fly", CurrentValue = false, Flag = "FlyToggle",
+    Callback = function(state) if state then StartFly() else StopFly() end end,
 })
 
 LocalPlayer.CharacterAdded:Connect(function()
